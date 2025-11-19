@@ -367,21 +367,14 @@ int main(int argc, char** argv)
 
 void Andersen::runPointerAnalysis()
 {
-    // 工作列表：存储需要处理的节点
     WorkList<SVF::NodeID> worklist;
     
-    // Step 1: 初始化 - 处理所有的 Address 约束 (p = &a)
+    // Step 1: 初始化 - 处理所有的 Address 约束
     for (auto iter = consg->begin(); iter != consg->end(); ++iter) {
         SVF::ConstraintNode* node = iter->second;
-        
-        const SVF::ConstraintEdge::ConstraintEdgeSetTy& addrInEdges = node->getAddrInEdges();
-        
-        for (auto edge : addrInEdges) {
-            SVF::NodeID srcId = edge->getSrcID();
-            SVF::NodeID dstId = edge->getDstID();
-            
-            if (pts[dstId].insert(srcId).second) {
-                worklist.push(dstId);
+        for (auto edge : node->getAddrInEdges()) {
+            if (pts[edge->getDstID()].insert(edge->getSrcID()).second) {
+                worklist.push(edge->getDstID());
             }
         }
     }
@@ -392,9 +385,8 @@ void Andersen::runPointerAnalysis()
         SVF::ConstraintNode* node = consg->getConstraintNode(nodeId);
         const std::set<unsigned>& nodePts = pts[nodeId];
         
-        // Step 2.1: Copy 边 (p = q)
-        const SVF::ConstraintEdge::ConstraintEdgeSetTy& copyOutEdges = node->getCopyOutEdges();
-        for (auto edge : copyOutEdges) {
+        // Copy 边 (p = q)
+        for (auto edge : node->getCopyOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             size_t oldSize = pts[dstId].size();
             pts[dstId].insert(nodePts.begin(), nodePts.end());
@@ -403,78 +395,37 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // Step 2.2: Load 边 (p = *q)
-        const SVF::ConstraintEdge::ConstraintEdgeSetTy& loadOutEdges = node->getLoadOutEdges();
-        for (auto edge : loadOutEdges) {
+        // Load 边 (p = *q)
+        for (auto edge : node->getLoadOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             size_t oldSize = pts[dstId].size();
-            
             for (SVF::NodeID o : nodePts) {
                 pts[dstId].insert(pts[o].begin(), pts[o].end());
             }
-            
             if (pts[dstId].size() > oldSize) {
                 worklist.push(dstId);
             }
         }
         
-        // Step 2.3: Store 边 (*p = q)
-        const SVF::ConstraintEdge::ConstraintEdgeSetTy& storeOutEdges = node->getStoreOutEdges();
-        for (auto edge : storeOutEdges) {
+        // Store 边 (*p = q)
+        for (auto edge : node->getStoreOutEdges()) {
             SVF::NodeID srcId = edge->getSrcID();
-            const std::set<unsigned>& srcPts = pts[srcId];
-            
             for (SVF::NodeID o : nodePts) {
                 size_t oldSize = pts[o].size();
-                pts[o].insert(srcPts.begin(), srcPts.end());
+                pts[o].insert(pts[srcId].begin(), pts[srcId].end());
                 if (pts[o].size() > oldSize) {
                     worklist.push(o);
                 }
             }
         }
         
-        // Step 2.4: Gep 边 (p = &q->field)
-        // 处理所有GEP边，包括常量和变量偏移
-        // const SVF::ConstraintEdge::ConstraintEdgeSetTy& gepOutEdges = node->getGepOutEdges();
-        // for (auto edge : gepOutEdges) {
-        //     SVF::GepCGEdge* gepEdge = SVF::SVFUtil::dyn_cast<SVF::GepCGEdge>(edge);
-        //     SVF::NodeID dstId = edge->getDstID();
-        //     bool changed = false;
-            
-        //     if (gepEdge && gepEdge->isConstantOffset()) {
-        //         // 常量偏移 - 获取实际的偏移值
-        //         SVF::APOffset offset = gepEdge->getConstantStructFldIdx();
-                
-        //         for (SVF::NodeID o : nodePts) {
-        //             SVF::NodeID fieldObj = consg->getGepObjVar(o, offset);
-        //             if (pts[dstId].insert(fieldObj).second) {
-        //                 changed = true;
-        //             }
-        //         }
-        //     } else {
-        //         // 变量偏移或转换失败 - 保守处理
-        //         // 添加基对象本身
-        //         for (SVF::NodeID o : nodePts) {
-        //             if (pts[dstId].insert(o).second) {
-        //                 changed = true;
-        //             }
-        //         }
-        //     }
-            
-        //     if (changed) {
-        //         worklist.push(dstId);
-        //     }
-        // }
-        // Step 2.4: Gep 边 (p = &q->field)
-        const SVF::ConstraintEdge::ConstraintEdgeSetTy& gepOutEdges = node->getGepOutEdges();
-        for (auto edge : gepOutEdges) {
+        // NormalGep 边 (p = &q->field, 常量偏移)
+        for (auto edge : node->getGepOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             bool changed = false;
             
-            // 尝试转换为NormalGepCGEdge（常量偏移）
             SVF::NormalGepCGEdge* normalGep = SVF::SVFUtil::dyn_cast<SVF::NormalGepCGEdge>(edge);
             if (normalGep) {
-                // 使用getConstantFieldIdx()获取偏移量
                 SVF::APOffset offset = normalGep->getConstantFieldIdx();
                 for (SVF::NodeID o : nodePts) {
                     SVF::NodeID fieldObj = consg->getGepObjVar(o, offset);
@@ -483,7 +434,7 @@ void Andersen::runPointerAnalysis()
                     }
                 }
             } else {
-                // VariantGepCGEdge（变量偏移）- 保守处理
+                // 如果转换失败,保守处理
                 for (SVF::NodeID o : nodePts) {
                     if (pts[dstId].insert(o).second) {
                         changed = true;
@@ -492,6 +443,17 @@ void Andersen::runPointerAnalysis()
             }
             
             if (changed) {
+                worklist.push(dstId);
+            }
+        }
+        
+        // ⭐ 关键:VariantGep 边 (p = q + i, 变量偏移)
+        // 对于变量偏移,保守地直接传播指向集合
+        for (auto edge : node->getVarGepOutEdges()) {
+            SVF::NodeID dstId = edge->getDstID();
+            size_t oldSize = pts[dstId].size();
+            pts[dstId].insert(nodePts.begin(), nodePts.end());
+            if (pts[dstId].size() > oldSize) {
                 worklist.push(dstId);
             }
         }
