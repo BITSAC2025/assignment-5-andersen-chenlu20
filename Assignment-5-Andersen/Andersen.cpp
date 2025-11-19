@@ -75,11 +75,12 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // Gep - 使用最简单的方式
+        // Gep - 显式指定 APOffset 类型
         for (auto e : node->getGepOutEdges()) {
             bool changed = false;
             for (auto o : pts[n]) {
-                if (pts[e->getDstID()].insert(consg->getGepObjVar(o, 0)).second) {
+                // 使用 SVF::APOffset(0) 显式指定类型
+                if (pts[e->getDstID()].insert(consg->getGepObjVar(o, SVF::APOffset(0))).second) {
                     changed = true;
                 }
             }
