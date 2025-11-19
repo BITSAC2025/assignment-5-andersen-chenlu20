@@ -2,7 +2,6 @@
  * Andersen.cpp
  * @author 3220252746
  */
-
 #include "A5Header.h"
 
 using namespace llvm;
@@ -13,13 +12,11 @@ int main(int argc, char** argv)
     auto moduleNameVec =
             OptionBase::parseOptions(argc, argv, "Whole Program Points-to Analysis",
                                      "[options] <input-bitcode...>");
-
     SVF::LLVMModuleSet::buildSVFModule(moduleNameVec);
-
     SVF::SVFIRBuilder builder;
     auto pag = builder.build();
     auto consg = new SVF::ConstraintGraph(pag);
-
+    
     Andersen andersen(consg);
     andersen.runPointerAnalysis();
     andersen.dumpResult();
@@ -83,14 +80,17 @@ void Andersen::runPointerAnalysis()
         }
         
         // GEP 边: p = &q->field
-        // 关键修复: 使用 getGepObjVar(NodeID, const GepCGEdge*)
+        // 关键: 转换为 GepCGEdge* 类型
         for (auto edge : node->getGepOutEdges()) {
-            SVF::NodeID dstId = edge->getDstID();
+            SVF::GepCGEdge* gepEdge = SVF::SVFUtil::dyn_cast<SVF::GepCGEdge>(edge);
+            if (!gepEdge) continue;  // 转换失败则跳过
+            
+            SVF::NodeID dstId = gepEdge->getDstID();
             bool changed = false;
             
             for (SVF::NodeID o : nodePts) {
-                // 直接传入 edge,让 SVF 内部处理偏移计算
-                SVF::NodeID fieldObj = consg->getGepObjVar(o, edge);
+                // 使用 getGepObjVar(NodeID, const GepCGEdge*)
+                SVF::NodeID fieldObj = consg->getGepObjVar(o, gepEdge);
                 if (pts[dstId].insert(fieldObj).second) {
                     changed = true;
                 }
