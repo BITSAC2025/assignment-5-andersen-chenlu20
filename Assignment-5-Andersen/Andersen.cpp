@@ -364,7 +364,6 @@ int main(int argc, char** argv)
 	return 0;
 }
 
-
 void Andersen::runPointerAnalysis()
 {
     WorkList<SVF::NodeID> worklist;
@@ -419,13 +418,15 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // NormalGep 边 (p = &q->field, 常量偏移)
+        // GEP 边 - 统一处理常量和变量偏移
         for (auto edge : node->getGepOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             bool changed = false;
             
+            // 尝试转换为 NormalGepCGEdge (常量偏移)
             SVF::NormalGepCGEdge* normalGep = SVF::SVFUtil::dyn_cast<SVF::NormalGepCGEdge>(edge);
             if (normalGep) {
+                // 常量偏移:精确计算字段对象
                 SVF::APOffset offset = normalGep->getConstantFieldIdx();
                 for (SVF::NodeID o : nodePts) {
                     SVF::NodeID fieldObj = consg->getGepObjVar(o, offset);
@@ -434,7 +435,7 @@ void Andersen::runPointerAnalysis()
                     }
                 }
             } else {
-                // 如果转换失败,保守处理
+                // 变量偏移(VariantGep):保守处理,直接传播基对象
                 for (SVF::NodeID o : nodePts) {
                     if (pts[dstId].insert(o).second) {
                         changed = true;
@@ -443,17 +444,6 @@ void Andersen::runPointerAnalysis()
             }
             
             if (changed) {
-                worklist.push(dstId);
-            }
-        }
-        
-        // ⭐ 关键:VariantGep 边 (p = q + i, 变量偏移)
-        // 对于变量偏移,保守地直接传播指向集合
-        for (auto edge : node->getVarGepOutEdges()) {
-            SVF::NodeID dstId = edge->getDstID();
-            size_t oldSize = pts[dstId].size();
-            pts[dstId].insert(nodePts.begin(), nodePts.end());
-            if (pts[dstId].size() > oldSize) {
                 worklist.push(dstId);
             }
         }
