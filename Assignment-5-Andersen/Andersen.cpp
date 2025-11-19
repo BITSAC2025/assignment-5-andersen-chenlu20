@@ -29,7 +29,7 @@ void Andersen::runPointerAnalysis()
 {
     WorkList<SVF::NodeID> worklist;
     
-    // 初始化: 处理所有 Address 约束
+    // 初始化
     for (auto iter = consg->begin(); iter != consg->end(); ++iter) {
         SVF::ConstraintNode* node = iter->second;
         for (auto edge : node->getAddrInEdges()) {
@@ -41,63 +41,50 @@ void Andersen::runPointerAnalysis()
     
     // 主循环
     while (!worklist.empty()) {
-        SVF::NodeID nodeId = worklist.pop();
-        SVF::ConstraintNode* node = consg->getConstraintNode(nodeId);
-        const std::set<unsigned>& nodePts = pts[nodeId];
+        SVF::NodeID n = worklist.pop();
+        SVF::ConstraintNode* node = consg->getConstraintNode(n);
         
-        // Copy 边: p = q
-        for (auto edge : node->getCopyOutEdges()) {
-            SVF::NodeID dstId = edge->getDstID();
-            size_t oldSize = pts[dstId].size();
-            pts[dstId].insert(nodePts.begin(), nodePts.end());
-            if (pts[dstId].size() > oldSize) {
-                worklist.push(dstId);
+        // Copy
+        for (auto e : node->getCopyOutEdges()) {
+            size_t old = pts[e->getDstID()].size();
+            pts[e->getDstID()].insert(pts[n].begin(), pts[n].end());
+            if (pts[e->getDstID()].size() > old) {
+                worklist.push(e->getDstID());
             }
         }
         
-        // Load 边: p = *q
-        for (auto edge : node->getLoadOutEdges()) {
-            SVF::NodeID dstId = edge->getDstID();
-            size_t oldSize = pts[dstId].size();
-            for (SVF::NodeID o : nodePts) {
-                pts[dstId].insert(pts[o].begin(), pts[o].end());
+        // Load
+        for (auto e : node->getLoadOutEdges()) {
+            size_t old = pts[e->getDstID()].size();
+            for (auto o : pts[n]) {
+                pts[e->getDstID()].insert(pts[o].begin(), pts[o].end());
             }
-            if (pts[dstId].size() > oldSize) {
-                worklist.push(dstId);
+            if (pts[e->getDstID()].size() > old) {
+                worklist.push(e->getDstID());
             }
         }
         
-        // Store 边: *p = q
-        for (auto edge : node->getStoreOutEdges()) {
-            SVF::NodeID srcId = edge->getSrcID();
-            for (SVF::NodeID o : nodePts) {
-                size_t oldSize = pts[o].size();
-                pts[o].insert(pts[srcId].begin(), pts[srcId].end());
-                if (pts[o].size() > oldSize) {
+        // Store
+        for (auto e : node->getStoreOutEdges()) {
+            for (auto o : pts[n]) {
+                size_t old = pts[o].size();
+                pts[o].insert(pts[e->getSrcID()].begin(), pts[e->getSrcID()].end());
+                if (pts[o].size() > old) {
                     worklist.push(o);
                 }
             }
         }
         
-        // GEP 边: p = &q->field
-        // 关键: 转换为 GepCGEdge* 类型
-        for (auto edge : node->getGepOutEdges()) {
-            SVF::GepCGEdge* gepEdge = SVF::SVFUtil::dyn_cast<SVF::GepCGEdge>(edge);
-            if (!gepEdge) continue;  // 转换失败则跳过
-            
-            SVF::NodeID dstId = gepEdge->getDstID();
+        // Gep - 使用最简单的方式
+        for (auto e : node->getGepOutEdges()) {
             bool changed = false;
-            
-            for (SVF::NodeID o : nodePts) {
-                // 使用 getGepObjVar(NodeID, const GepCGEdge*)
-                SVF::NodeID fieldObj = consg->getGepObjVar(o, gepEdge);
-                if (pts[dstId].insert(fieldObj).second) {
+            for (auto o : pts[n]) {
+                if (pts[e->getDstID()].insert(consg->getGepObjVar(o, 0)).second) {
                     changed = true;
                 }
             }
-            
             if (changed) {
-                worklist.push(dstId);
+                worklist.push(e->getDstID());
             }
         }
     }
