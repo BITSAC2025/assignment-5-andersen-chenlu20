@@ -384,7 +384,7 @@ void Andersen::runPointerAnalysis()
         SVF::ConstraintNode* node = consg->getConstraintNode(nodeId);
         const std::set<unsigned>& nodePts = pts[nodeId];
         
-        // Copy 边
+        // Copy
         for (auto edge : node->getCopyOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             size_t oldSize = pts[dstId].size();
@@ -394,7 +394,7 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // Load 边
+        // Load
         for (auto edge : node->getLoadOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             size_t oldSize = pts[dstId].size();
@@ -406,7 +406,7 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // Store 边
+        // Store
         for (auto edge : node->getStoreOutEdges()) {
             SVF::NodeID srcId = edge->getSrcID();
             for (SVF::NodeID o : nodePts) {
@@ -418,15 +418,16 @@ void Andersen::runPointerAnalysis()
             }
         }
         
-        // ⭐ 关键修复: GEP 边处理
+        // GEP - 尝试获取实际偏移量
         for (auto edge : node->getGepOutEdges()) {
             SVF::NodeID dstId = edge->getDstID();
             bool changed = false;
             
+            // 尝试作为 NormalGep
             SVF::NormalGepCGEdge* normalGep = SVF::SVFUtil::dyn_cast<SVF::NormalGepCGEdge>(edge);
             
             if (normalGep) {
-                // 常量偏移: 使用精确的字段对象
+                // 常量偏移 - 使用实际偏移
                 SVF::APOffset offset = normalGep->getConstantFieldIdx();
                 for (SVF::NodeID o : nodePts) {
                     SVF::NodeID fieldObj = consg->getGepObjVar(o, offset);
@@ -435,9 +436,10 @@ void Andersen::runPointerAnalysis()
                     }
                 }
             } else {
-                // 变量偏移: 保守处理 - 直接传播基对象o
+                // 变量偏移 - 使用 offset=0 作为保守近似
                 for (SVF::NodeID o : nodePts) {
-                    if (pts[dstId].insert(o).second) {  // 注意:这里是o,不是fieldObj!
+                    SVF::NodeID fieldObj = consg->getGepObjVar(o, 0);
+                    if (pts[dstId].insert(fieldObj).second) {
                         changed = true;
                     }
                 }
